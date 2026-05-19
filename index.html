@@ -176,6 +176,9 @@
   </label>
 
   <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/box_timer/sw.js').catch(() => {});
+    }
     let interval = null;
     let currentRound = 0;
     let isRunning = false;
