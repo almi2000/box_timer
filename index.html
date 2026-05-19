@@ -20,11 +20,11 @@
 
     .settings {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 1.5rem;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
       margin-bottom: 2rem;
       width: 100%;
-      max-width: 600px;
+      max-width: 700px;
     }
     .setting-group {
       background: #1a1a1a;
@@ -34,9 +34,9 @@
     }
     .setting-group label {
       display: block;
-      font-size: 0.85rem;
+      font-size: 0.75rem;
       color: #888;
-      margin-bottom: 0.75rem;
+      margin-bottom: 0.5rem;
     }
     .setting-group input {
       width: 100%;
@@ -44,8 +44,8 @@
       border: 1px solid #333;
       border-radius: 8px;
       color: #fff;
-      font-size: 1.5rem;
-      padding: 0.5rem;
+      font-size: 1.3rem;
+      padding: 0.4rem;
       text-align: center;
     }
     .controls {
@@ -81,8 +81,11 @@
       letter-spacing: 0.2em;
       height: 2rem;
     }
+    .phase.ready { color: #fca311; }
+    .phase.prep { color: #fca311; }
     .phase.round { color: #e63946; }
     .phase.pause { color: #2a9d8f; }
+    .phase.done { color: #06d6a0; }
 
     .progress-bar {
       width: 100%;
@@ -95,17 +98,35 @@
     }
     .progress-bar .fill {
       height: 100%;
-      background: #e63946;
       transition: width 0.1s linear;
     }
+    .fill.round { background: #e63946; }
+    .fill.pause { background: #2a9d8f; }
+    .fill.prep { background: #fca311; }
+
     .round-counter {
       margin-top: 1rem;
       font-size: 1.2rem;
       color: #888;
     }
 
-    @media (max-width: 500px) {
-      .settings { grid-template-columns: 1fr; }
+    .sound-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      color: #888;
+      cursor: pointer;
+    }
+    .sound-toggle input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #e63946;
+    }
+
+    @media (max-width: 600px) {
+      .settings { grid-template-columns: repeat(2, 1fr); }
       .timer-display { font-size: 4rem; }
     }
   </style>
@@ -114,6 +135,10 @@
   <h1>⚡ BOX TIMER</h1>
 
   <div class="settings">
+    <div class="setting-group">
+      <label>Vorbereitung (Sek)</label>
+      <input type="number" id="prepTime" value="10" min="0" step="5">
+    </div>
     <div class="setting-group">
       <label>Runde (Sekunden)</label>
       <input type="number" id="roundTime" value="180" min="10" step="10">
@@ -134,20 +159,64 @@
     <button class="reset" onclick="resetTimer()">↺ RESET</button>
   </div>
 
-  <div class="phase" id="phaseLabel">Bereit</div>
+  <div class="phase ready" id="phaseLabel">Bereit</div>
   <div class="timer-display" id="timerDisplay">00:00</div>
   <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
   <div class="round-counter" id="roundCounter">Runde 0 / 12</div>
+
+  <label class="sound-toggle">
+    <input type="checkbox" id="soundEnabled" checked>
+    🔔 Signalton bei Phasenende
+  </label>
 
   <script>
     let interval = null;
     let currentRound = 0;
     let isRunning = false;
     let isPaused = false;
-    let totalDuration = 0;
+    let currentPhase = 'ready'; // ready, prep, round, pause, done
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    function playTone(freq, duration, type = 'sine') {
+      if (!document.getElementById('soundEnabled').checked) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      osc.frequency.value = freq;
+      osc.type = type;
+      gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + duration);
+    }
+
+    function playRoundEnd() {
+      playTone(880, 0.15, 'square');
+      setTimeout(() => playTone(880, 0.15, 'square'), 200);
+      setTimeout(() => playTone(880, 0.3, 'square'), 400);
+    }
+
+    function playPauseEnd() {
+      playTone(660, 0.1, 'sine');
+      setTimeout(() => playTone(880, 0.15, 'sine'), 150);
+    }
+
+    function playStart() {
+      playTone(440, 0.2, 'sine');
+      setTimeout(() => playTone(660, 0.2, 'sine'), 250);
+    }
+
+    function playDone() {
+      playTone(523, 0.2, 'sine');
+      setTimeout(() => playTone(659, 0.2, 'sine'), 200);
+      setTimeout(() => playTone(784, 0.2, 'sine'), 400);
+      setTimeout(() => playTone(1047, 0.4, 'sine'), 600);
+    }
 
     function getSettings() {
       return {
+        prepTime: parseInt(document.getElementById('prepTime').value) || 0,
         roundTime: parseInt(document.getElementById('roundTime').value) || 180,
         pauseTime: parseInt(document.getElementById('pauseTime').value) || 60,
         totalRounds: parseInt(document.getElementById('totalRounds').value) || 12
@@ -160,57 +229,151 @@
       return `${m}:${s}`;
     }
 
+    function updateDisplay(remaining, phase, round, totalRounds, phaseDuration) {
+      document.getElementById('timerDisplay').innerText = formatTime(remaining);
+      const phaseEl = document.getElementById('phaseLabel');
+      const fillEl = document.getElementById('progressFill');
+
+      if (phase === 'prep') {
+        phaseEl.innerText = `Vorbereitung ${round} / ${totalRounds}`;
+        phaseEl.className = 'phase prep';
+        fillEl.className = 'fill prep';
+      } else if (phase === 'round') {
+        phaseEl.innerText = `Runde ${round} / ${totalRounds}`;
+        phaseEl.className = 'phase round';
+        fillEl.className = 'fill round';
+      } else if (phase === 'pause') {
+        phaseEl.innerText = `Pause ${round} / ${totalRounds}`;
+        phaseEl.className = 'phase pause';
+        fillEl.className = 'fill pause';
+      }
+
+      document.getElementById('roundCounter').innerText = `Runde ${round} / ${totalRounds}`;
+      const pct = phaseDuration > 0 ? ((phaseDuration - remaining) / phaseDuration) * 100 : 0;
+      fillEl.style.width = pct + '%';
+    }
+
     function startTimer() {
       const settings = getSettings();
-      if (currentRound === 0) currentRound = 1;
 
-      if (!isRunning) {
-        totalDuration = settings.roundTime;
-        isRunning = true;
+      if (!isRunning && !isPaused) {
+        // Fresh start
+        if (settings.prepTime > 0) {
+          currentPhase = 'prep';
+          currentRound = 1;
+          startPhase(settings.prepTime, 'prep', settings);
+        } else {
+          currentPhase = 'round';
+          currentRound = 1;
+          playStart();
+          startPhase(settings.roundTime, 'round', settings);
+        }
+      } else if (isPaused) {
+        // Resume
         isPaused = false;
+        isRunning = true;
+        resumeTimer(settings);
       }
+    }
 
+    function startPhase(duration, phase, settings) {
       clearInterval(interval);
-      let remaining = parseInt(document.getElementById('timerDisplay').innerText.split(':')[0]) * 60
-                    + parseInt(document.getElementById('timerDisplay').innerText.split(':')[1]);
+      let remaining = duration;
 
-      if (remaining <= 0) {
-        remaining = settings.roundTime;
-        currentRound = Math.min(currentRound, settings.totalRounds);
-      }
-
-      updateDisplay(remaining, 'Runde', currentRound, settings.totalRounds, settings.roundTime);
+      updateDisplay(remaining, phase, currentRound, settings.totalRounds, duration);
 
       interval = setInterval(() => {
         remaining--;
-        const inPause = currentRound % 2 === 0;
-        const phaseDuration = inPause ? settings.pauseTime : settings.roundTime;
 
         if (remaining <= 0) {
-          if (!inPause) {
+          if (phase === 'prep') {
+            currentPhase = 'round';
+            playStart();
+            updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
+            remaining = settings.roundTime;
+            phase = 'round';
+          } else if (phase === 'round') {
             currentRound++;
             if (currentRound > settings.totalRounds) {
               clearInterval(interval);
               isRunning = false;
+              currentPhase = 'done';
+              playDone();
               document.getElementById('phaseLabel').innerText = '✅ FERTIG!';
+              document.getElementById('phaseLabel').className = 'phase done';
               document.getElementById('timerDisplay').innerText = '00:00';
               document.getElementById('roundCounter').innerText = `Alle ${settings.totalRounds} Runden geschafft!`;
+              document.getElementById('progressFill').style.width = '100%';
               return;
             }
+            playRoundEnd();
+            currentPhase = 'pause';
+            updateDisplay(settings.pauseTime, 'pause', currentRound, settings.totalRounds, settings.pauseTime);
             remaining = settings.pauseTime;
-            totalDuration = settings.pauseTime;
-          } else {
-            currentRound++;
+            phase = 'pause';
+          } else if (phase === 'pause') {
+            playPauseEnd();
+            currentPhase = 'round';
+            updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
             remaining = settings.roundTime;
-            totalDuration = settings.roundTime;
+            phase = 'round';
           }
+        } else {
+          updateDisplay(remaining, phase, currentRound, settings.totalRounds, phase === 'round' ? settings.roundTime : phase === 'pause' ? settings.pauseTime : settings.prepTime);
         }
+      }, 1000);
 
-        const phaseLabel = (!inPause && remaining === settings.roundTime) || (inPause && remaining === settings.pauseTime)
-          ? (inPause ? 'Pause' : 'Runde')
-          : (inPause ? 'Pause' : 'Runde');
+      isRunning = true;
+      isPaused = false;
+    }
 
-        updateDisplay(remaining, phaseLabel, Math.min(currentRound, settings.totalRounds), settings.totalRounds, phaseDuration);
+    function resumeTimer(settings) {
+      const phase = currentPhase;
+      const display = document.getElementById('timerDisplay').innerText;
+      const parts = display.split(':');
+      const remaining = parseInt(parts[0]) * 60 + parseInt(parts[1]);
+
+      clearInterval(interval);
+      interval = setInterval(() => {
+        let currentRemaining = parseInt(document.getElementById('timerDisplay').innerText.split(':')[0]) * 60
+                             + parseInt(document.getElementById('timerDisplay').innerText.split(':')[1]);
+        currentRemaining--;
+
+        if (currentRemaining <= 0) {
+          if (phase === 'prep') {
+            currentPhase = 'round';
+            playStart();
+            currentRound = 1;
+            updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
+            currentRemaining = settings.roundTime;
+          } else if (phase === 'round') {
+            currentRound++;
+            if (currentRound > settings.totalRounds) {
+              clearInterval(interval);
+              isRunning = false;
+              currentPhase = 'done';
+              playDone();
+              document.getElementById('phaseLabel').innerText = '✅ FERTIG!';
+              document.getElementById('phaseLabel').className = 'phase done';
+              document.getElementById('timerDisplay').innerText = '00:00';
+              document.getElementById('roundCounter').innerText = `Alle ${settings.totalRounds} Runden geschafft!`;
+              document.getElementById('progressFill').style.width = '100%';
+              return;
+            }
+            playRoundEnd();
+            currentPhase = 'pause';
+            updateDisplay(settings.pauseTime, 'pause', currentRound, settings.totalRounds, settings.pauseTime);
+            currentRemaining = settings.pauseTime;
+          } else if (phase === 'pause') {
+            playPauseEnd();
+            currentPhase = 'round';
+            updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
+            currentRemaining = settings.roundTime;
+          }
+        } else {
+          updateDisplay(currentRemaining, phase, currentRound, settings.totalRounds,
+            phase === 'round' ? settings.roundTime : phase === 'pause' ? settings.pauseTime : settings.prepTime);
+        }
       }, 1000);
     }
 
@@ -227,25 +390,17 @@
       currentRound = 0;
       isRunning = false;
       isPaused = false;
+      currentPhase = 'ready';
       const settings = getSettings();
-      document.getElementById('timerDisplay').innerText = formatTime(settings.roundTime);
+      document.getElementById('timerDisplay').innerText = formatTime(settings.prepTime > 0 ? settings.prepTime : settings.roundTime);
       document.getElementById('phaseLabel').innerText = 'Bereit';
-      document.getElementById('phaseLabel').className = 'phase';
+      document.getElementById('phaseLabel').className = 'phase ready';
       document.getElementById('roundCounter').innerText = `Runde 0 / ${settings.totalRounds}`;
       document.getElementById('progressFill').style.width = '0%';
+      document.getElementById('progressFill').className = 'fill';
     }
 
-    function updateDisplay(remaining, phaseLabel, round, totalRounds, phaseDuration) {
-      document.getElementById('timerDisplay').innerText = formatTime(remaining);
-      const phaseEl = document.getElementById('phaseLabel');
-      phaseEl.innerText = `${phaseLabel} ${round} / ${totalRounds}`;
-      phaseEl.className = `phase ${round % 2 === 0 ? 'pause' : 'round'}`;
-      document.getElementById('roundCounter').innerText = `Runde ${Math.min(round, totalRounds)} / ${totalRounds}`;
-      const pct = ((phaseDuration - remaining) / phaseDuration) * 100;
-      document.getElementById('progressFill').style.width = pct + '%';
-    }
-
-    // init display
+    // init
     resetTimer();
   </script>
 </body>
