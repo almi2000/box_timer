@@ -177,9 +177,19 @@
     let currentPhase = 'ready'; // ready, prep, round, pause, done
 
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let audioReady = false;
+
+    function initAudio() {
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().then(() => { audioReady = true; });
+      } else {
+        audioReady = true;
+      }
+    }
 
     function playTone(freq, duration, type = 'sine') {
       if (!document.getElementById('soundEnabled').checked) return;
+      if (audioCtx.state === 'suspended') audioCtx.resume();
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.connect(gain);
@@ -254,6 +264,7 @@
     }
 
     function startTimer() {
+      initAudio();
       const settings = getSettings();
 
       if (!isRunning && !isPaused) {
