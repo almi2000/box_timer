@@ -176,41 +176,40 @@
     let isPaused = false;
     let currentPhase = 'ready'; // ready, prep, round, pause, done
 
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    let audioReady = false;
+    let audioCtx = null;
 
-    function initAudio() {
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume().then(() => { audioReady = true; });
-      } else {
-        audioReady = true;
+    function getAudioCtx() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
+      return audioCtx;
     }
 
     async function ensureAudio() {
-      if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
+      const ctx = getAudioCtx();
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
       }
     }
 
     async function playTone(freq, duration, type = 'sine') {
       if (!document.getElementById('soundEnabled').checked) return;
       await ensureAudio();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
+      const ctx = getAudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
       osc.connect(gain);
       osc.frequency.value = freq;
       osc.type = type;
-      gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-      osc.start(audioCtx.currentTime);
-      osc.stop(audioCtx.currentTime + duration);
+      gain.gain.setValueAtTime(0.4, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + duration);
     }
 
     function playRoundEnd() {
       playTone(880, 0.15, 'square');
-      setTimeout(() => playTone(880, 0.15, 'square'), 200);
-      setTimeout(() => playTone(880, 0.3, 'square'), 400);
+      setTimeout(() => { playTone(880, 0.15, 'square').then(() => playTone(880, 0.3, 'square')); }, 200);
     }
 
     function playPauseEnd() {
@@ -270,7 +269,6 @@
     }
 
     function startTimer() {
-      initAudio();
       const settings = getSettings();
 
       if (!isRunning && !isPaused) {
