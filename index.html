@@ -185,44 +185,30 @@
     let isPaused = false;
     let currentPhase = 'ready'; // ready, prep, round, pause, done
 
-    // Generate a WAV beep programmatically
-    function createBeepUrl(freq, duration) {
-      const sampleRate = 44100;
-      const samples = Math.floor(duration * sampleRate);
-      const buffer = new ArrayBuffer(44 + samples * 2);
-      const view = new DataView(buffer);
-      
-      const writeStr = (o, s) => { for (let i=0;i<s.length;i++) view.setUint8(o+i, s.charCodeAt(i)); };
-      writeStr(0, 'RIFF'); writeStr(4, 'WAVE'); writeStr(8, 'fmt ');
-      view.setUint32(12, 16, true); view.setUint16(14, 1, true);
-      view.setUint16(16, 1, true); view.setUint32(17, sampleRate, true);
-      view.setUint32(20, sampleRate * 2, true); view.setUint16(22, 2, true);
-      view.setUint16(24, 16, true); writeStr(36, 'data');
-      view.setUint32(40, samples * 2, true);
-      
-      for (let i = 0; i < samples; i++) {
-        const t = i / sampleRate;
-        const env = Math.min(1, Math.min(t / 0.005, (duration - t) / 0.01));
-        const s = Math.sin(2 * Math.PI * freq * t) * env * 0.8;
-        view.setInt16(44 + i * 2, Math.round(s * 32767), true);
-      }
-      return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
-    }
+    let audioCtx = null;
 
-    const beepCache = {};
-    function getBeep(freq, dur) {
-      const k = freq + '-' + dur;
-      if (!beepCache[k]) beepCache[k] = createBeepUrl(freq, dur);
-      return beepCache[k];
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
     }
 
     function playBeep(freq, duration) {
       if (!document.getElementById('soundEnabled').checked) return;
-      try {
-        const a = new Audio(getBeep(freq, duration));
-        a.volume = 0.8;
-        a.play().catch(() => {});
-      } catch(e) {}
+      initAudio();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration);
     }
 
     function playRoundEnd() {
