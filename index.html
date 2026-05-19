@@ -185,57 +185,66 @@
     let isPaused = false;
     let currentPhase = 'ready'; // ready, prep, round, pause, done
 
-    let audioCtx = null;
-
-    function getAudioCtx() {
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // Generate a WAV beep programmatically
+    function createBeepUrl(freq, duration) {
+      const sampleRate = 44100;
+      const samples = Math.floor(duration * sampleRate);
+      const buffer = new ArrayBuffer(44 + samples * 2);
+      const view = new DataView(buffer);
+      
+      const writeStr = (o, s) => { for (let i=0;i<s.length;i++) view.setUint8(o+i, s.charCodeAt(i)); };
+      writeStr(0, 'RIFF'); writeStr(4, 'WAVE'); writeStr(8, 'fmt ');
+      view.setUint32(12, 16, true); view.setUint16(14, 1, true);
+      view.setUint16(16, 1, true); view.setUint32(17, sampleRate, true);
+      view.setUint32(20, sampleRate * 2, true); view.setUint16(22, 2, true);
+      view.setUint16(24, 16, true); writeStr(36, 'data');
+      view.setUint32(40, samples * 2, true);
+      
+      for (let i = 0; i < samples; i++) {
+        const t = i / sampleRate;
+        const env = Math.min(1, Math.min(t / 0.005, (duration - t) / 0.01));
+        const s = Math.sin(2 * Math.PI * freq * t) * env * 0.8;
+        view.setInt16(44 + i * 2, Math.round(s * 32767), true);
       }
-      return audioCtx;
+      return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
     }
 
-    async function ensureAudio() {
-      const ctx = getAudioCtx();
-      if (ctx.state === 'suspended') {
-        await ctx.resume();
-      }
+    const beepCache = {};
+    function getBeep(freq, dur) {
+      const k = freq + '-' + dur;
+      if (!beepCache[k]) beepCache[k] = createBeepUrl(freq, dur);
+      return beepCache[k];
     }
 
-    async function playTone(freq, duration, type = 'sine') {
+    function playBeep(freq, duration) {
       if (!document.getElementById('soundEnabled').checked) return;
-      await ensureAudio();
-      const ctx = getAudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      osc.frequency.value = freq;
-      osc.type = type;
-      gain.gain.setValueAtTime(0.4, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + duration);
+      try {
+        const a = new Audio(getBeep(freq, duration));
+        a.volume = 0.8;
+        a.play().catch(() => {});
+      } catch(e) {}
     }
 
     function playRoundEnd() {
-      playTone(880, 0.15, 'square');
-      setTimeout(() => { playTone(880, 0.15, 'square').then(() => playTone(880, 0.3, 'square')); }, 200);
+      playBeep(880, 0.15);
+      setTimeout(() => { playBeep(880, 0.15); setTimeout(() => playBeep(880, 0.3), 200); }, 200);
     }
 
     function playPauseEnd() {
-      playTone(660, 0.1, 'sine');
-      setTimeout(() => playTone(880, 0.15, 'sine'), 150);
+      playBeep(660, 0.1);
+      setTimeout(() => playBeep(880, 0.15), 150);
     }
 
     function playStart() {
-      playTone(440, 0.2, 'sine');
-      setTimeout(() => playTone(660, 0.2, 'sine'), 250);
+      playBeep(440, 0.2);
+      setTimeout(() => playBeep(660, 0.2), 250);
     }
 
     function playDone() {
-      playTone(523, 0.2, 'sine');
-      setTimeout(() => playTone(659, 0.2, 'sine'), 200);
-      setTimeout(() => playTone(784, 0.2, 'sine'), 400);
-      setTimeout(() => playTone(1047, 0.4, 'sine'), 600);
+      playBeep(523, 0.2);
+      setTimeout(() => playBeep(659, 0.2), 200);
+      setTimeout(() => playBeep(784, 0.2), 400);
+      setTimeout(() => playBeep(1047, 0.4), 600);
     }
 
     function getSettings() {
