@@ -227,8 +227,8 @@
       // Distinct tone: 1200Hz for 0.1s with quick fade
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.frequency.value = 1200;
-      osc.type = 'triangle';
+      osc.frequency.value = 950;
+      osc.type = 'square';
       osc.connect(gain);
       gain.connect(audioCtx.destination);
       gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
@@ -301,7 +301,6 @@
         phaseEl.className = 'phase prep';
         fillEl.className = 'fill prep';
       } else if (phase === 'round') {
-          scheduleRandomBeep();
         phaseEl.innerText = `Runde ${round} / ${totalRounds}`;
         phaseEl.className = 'phase round';
         fillEl.className = 'fill round';
@@ -358,7 +357,6 @@
             remaining = settings.roundTime;
             phase = 'round';
           } else if (phase === 'round') {
-          scheduleRandomBeep();
             currentRound++;
             if (currentRound > settings.totalRounds) {
               clearInterval(interval);
@@ -373,6 +371,7 @@
               return;
             }
             playRoundEnd();
+            stopRandomBeep();
             currentPhase = 'pause';
             updateDisplay(settings.pauseTime, 'pause', currentRound, settings.totalRounds, settings.pauseTime);
             remaining = settings.pauseTime;
@@ -414,7 +413,6 @@
             updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
             currentRemaining = settings.roundTime;
           } else if (phase === 'round') {
-          scheduleRandomBeep();
             currentRound++;
             if (currentRound > settings.totalRounds) {
               clearInterval(interval);
@@ -429,12 +427,14 @@
               return;
             }
             playRoundEnd();
+            stopRandomBeep();
             currentPhase = 'pause';
             updateDisplay(settings.pauseTime, 'pause', currentRound, settings.totalRounds, settings.pauseTime);
             currentRemaining = settings.pauseTime;
           } else if (phase === 'pause') {
             playPauseEnd();
             currentPhase = 'round';
+            scheduleRandomBeep();
             updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
             currentRemaining = settings.roundTime;
           }
@@ -446,6 +446,7 @@
     }
 
     function pauseTimer() {
+      stopRandomBeep();
       if (isRunning) {
         clearInterval(interval);
         isPaused = true;
@@ -454,6 +455,7 @@
     }
 
     function resetTimer() {
+      stopRandomBeep();
       clearInterval(interval);
       currentRound = 0;
       isRunning = false;
