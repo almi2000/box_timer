@@ -130,6 +130,9 @@
       height: 18px;
       accent-color: #e63946;
     }
+    .sound-toggle + .sound-toggle {
+      margin-top: 0.5rem;
+    }
 
     @media (max-width: 600px) {
       .settings { grid-template-columns: repeat(2, 1fr); }
@@ -175,6 +178,11 @@
     🔔 Signalton bei Phasenende
   </label>
 
+  <label class="sound-toggle">
+    <input type="checkbox" id="randomBeepEnabled">
+    🎯 Zufällige Signale in Runden (5-17s)
+  </label>
+
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/box_timer/sw.js').catch(() => {});
@@ -184,6 +192,7 @@
     let isRunning = false;
     let isPaused = false;
     let currentPhase = 'ready'; // ready, prep, round, pause, done
+    let randomBeepTimer = null;
 
     let audioCtx = null;
 
@@ -209,6 +218,40 @@
       gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
       osc.start();
       osc.stop(audioCtx.currentTime + duration);
+    }
+
+    function playRandomBeep() {
+      if (!document.getElementById('randomBeepEnabled').checked) return;
+      if (!document.getElementById('soundEnabled').checked) return;
+      initAudio();
+      // Distinct tone: 1200Hz for 0.1s with quick fade
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.frequency.value = 1200;
+      osc.type = 'triangle';
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.1);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    function scheduleRandomBeep() {
+      if (randomBeepTimer) clearTimeout(randomBeepTimer);
+      if (!document.getElementById('randomBeepEnabled').checked) return;
+      const delay = 5000 + Math.random() * 12000; // 5-17 seconds
+      randomBeepTimer = setTimeout(() => {
+        playRandomBeep();
+        scheduleRandomBeep();
+      }, delay);
+    }
+
+    function stopRandomBeep() {
+      if (randomBeepTimer) {
+        clearTimeout(randomBeepTimer);
+        randomBeepTimer = null;
+      }
     }
 
     function playRoundEnd() {
@@ -258,6 +301,7 @@
         phaseEl.className = 'phase prep';
         fillEl.className = 'fill prep';
       } else if (phase === 'round') {
+          scheduleRandomBeep();
         phaseEl.innerText = `Runde ${round} / ${totalRounds}`;
         phaseEl.className = 'phase round';
         fillEl.className = 'fill round';
@@ -309,10 +353,12 @@
           if (phase === 'prep') {
             currentPhase = 'round';
             playStart();
+            scheduleRandomBeep();
             updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
             remaining = settings.roundTime;
             phase = 'round';
           } else if (phase === 'round') {
+          scheduleRandomBeep();
             currentRound++;
             if (currentRound > settings.totalRounds) {
               clearInterval(interval);
@@ -363,10 +409,12 @@
           if (phase === 'prep') {
             currentPhase = 'round';
             playStart();
+            scheduleRandomBeep();
             currentRound = 1;
             updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
             currentRemaining = settings.roundTime;
           } else if (phase === 'round') {
+          scheduleRandomBeep();
             currentRound++;
             if (currentRound > settings.totalRounds) {
               clearInterval(interval);
