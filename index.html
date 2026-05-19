@@ -187,9 +187,15 @@
       }
     }
 
-    function playTone(freq, duration, type = 'sine') {
+    async function ensureAudio() {
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+    }
+
+    async function playTone(freq, duration, type = 'sine') {
       if (!document.getElementById('soundEnabled').checked) return;
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+      await ensureAudio();
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.connect(gain);
