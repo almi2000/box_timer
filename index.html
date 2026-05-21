@@ -214,7 +214,7 @@
       osc.type = 'sine';
       osc.connect(gain);
       gain.connect(audioCtx.destination);
-      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.9, audioCtx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
       osc.start();
       osc.stop(audioCtx.currentTime + duration);
@@ -224,17 +224,17 @@
       if (!document.getElementById('randomBeepEnabled').checked) return;
       if (!document.getElementById('soundEnabled').checked) return;
       initAudio();
-      // Distinct tone: 1200Hz for 0.1s with quick fade
+      // Loud distinct tone: 1400Hz square for 0.15s
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.frequency.value = 950;
+      osc.frequency.value = 1400;
       osc.type = 'square';
       osc.connect(gain);
       gain.connect(audioCtx.destination);
-      gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.8, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.15);
       osc.start();
-      osc.stop(audioCtx.currentTime + 0.1);
+      osc.stop(audioCtx.currentTime + 0.15);
     }
 
     function scheduleRandomBeep() {
