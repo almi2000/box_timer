@@ -134,6 +134,20 @@
       margin-top: 0.5rem;
     }
 
+    .flash-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background: #fff;
+      opacity: 0;
+      z-index: 9999;
+      transition: opacity 0.12s ease-out;
+    }
+    .flash-overlay.active {
+      opacity: 0.9;
+      transition: none;
+    }
+
     @media (max-width: 600px) {
       .settings { grid-template-columns: repeat(2, 1fr); }
       .timer-display { font-size: 4rem; }
@@ -183,6 +197,13 @@
     🎯 Zufällige Signale in Runden (5-17s)
   </label>
 
+  <label class="sound-toggle">
+    <input type="checkbox" id="vibrateEnabled" checked>
+    📳 Vibration bei Signalen
+  </label>
+
+  <div class="flash-overlay" id="flashOverlay"></div>
+
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/box_timer/sw.js').catch(() => {});
@@ -195,46 +216,101 @@
     let randomBeepTimer = null;
 
     let audioCtx = null;
+    let masterGain = null;
 
     function initAudio() {
       if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // Master chain: pushed hard into a brickwall limiter so output stays
+        // as loud and consistent as possible on phone speakers without ugly clipping.
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = 2.5;
+        const limiter = audioCtx.createDynamicsCompressor();
+        limiter.threshold.value = -3;
+        limiter.knee.value = 0;
+        limiter.ratio.value = 20;
+        limiter.attack.value = 0.001;
+        limiter.release.value = 0.05;
+        masterGain.connect(limiter);
+        limiter.connect(audioCtx.destination);
       }
       if (audioCtx.state === 'suspended') {
         audioCtx.resume();
       }
     }
 
-    function playBeep(freq, duration) {
-      if (!document.getElementById('soundEnabled').checked) return;
-      initAudio();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.frequency.value = freq;
-      osc.type = 'sine';
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      gain.gain.setValueAtTime(0.9, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
-      osc.start();
-      osc.stop(audioCtx.currentTime + duration);
+    function soundOn() {
+      return document.getElementById('soundEnabled').checked;
     }
 
+    // Schedule one oscillator note relative to "now", routed through the master limiter.
+    function note({ freq, start = 0, dur = 0.15, type = 'square', gain = 0.6, detune = 0 }) {
+      const t0 = audioCtx.currentTime + start;
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      if (detune) osc.detune.value = detune;
+      osc.connect(g);
+      g.connect(masterGain);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.006); // punchy attack
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      osc.start(t0);
+      osc.stop(t0 + dur + 0.02);
+    }
+
+    // Bright metallic boxing-bell "ding" (layered partials).
+    function bell(offset) {
+      note({ freq: 1050, start: offset, dur: 0.5, type: 'square', gain: 0.5 });
+      note({ freq: 1580, start: offset, dur: 0.45, type: 'sine', gain: 0.5 });
+      note({ freq: 2100, start: offset, dur: 0.35, type: 'sine', gain: 0.35 });
+    }
+
+    // Low, harsh klaxon blast.
+    function buzzer(offset) {
+      note({ freq: 200, start: offset, dur: 0.6, type: 'sawtooth', gain: 0.55 });
+      note({ freq: 150, start: offset, dur: 0.6, type: 'square', gain: 0.4 });
+      note({ freq: 200, start: offset, dur: 0.6, type: 'sawtooth', gain: 0.4, detune: 10 });
+    }
+
+    // navigator.vibrate — makes signals impossible to miss on Android even if muted.
+    function vibrate(pattern) {
+      if (!document.getElementById('vibrateEnabled').checked) return;
+      if (navigator.vibrate) navigator.vibrate(pattern);
+    }
+
+    // Full-screen colour flash so phase changes are visually obvious too.
+    function flash(color, times = 1) {
+      const el = document.getElementById('flashOverlay');
+      let n = 0;
+      (function pulse() {
+        el.style.background = color;
+        el.classList.add('active');
+        setTimeout(() => {
+          el.classList.remove('active');
+          if (++n < times) setTimeout(pulse, 150);
+        }, 150);
+      })();
+    }
+
+    // Legacy helper kept for compatibility.
+    function playBeep(freq, duration) {
+      if (!soundOn()) return;
+      initAudio();
+      note({ freq, dur: duration, type: 'square', gain: 0.6 });
+    }
+
+    // Sharp double-blip, mid-high, clearly different from bell/buzzer.
     function playRandomBeep() {
       if (!document.getElementById('randomBeepEnabled').checked) return;
-      if (!document.getElementById('soundEnabled').checked) return;
-      initAudio();
-      // Loud distinct tone: 1400Hz square for 0.15s
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.frequency.value = 1400;
-      osc.type = 'square';
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      gain.gain.setValueAtTime(0.8, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.15);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.15);
+      if (soundOn()) {
+        initAudio();
+        note({ freq: 1500, start: 0, dur: 0.09, type: 'square', gain: 0.6 });
+        note({ freq: 1500, start: 0.13, dur: 0.09, type: 'square', gain: 0.6 });
+      }
+      vibrate([70, 60, 70]);
+      flash('#fca311', 1);
     }
 
     function scheduleRandomBeep() {
@@ -254,26 +330,37 @@
       }
     }
 
+    // Round ends → rest: low double klaxon blast + strong long buzz.
     function playRoundEnd() {
-      playBeep(880, 0.15);
-      setTimeout(() => { playBeep(880, 0.15); setTimeout(() => playBeep(880, 0.3), 200); }, 200);
+      if (soundOn()) { initAudio(); buzzer(0); buzzer(0.75); }
+      vibrate([700, 200, 700]);
+      flash('#2a9d8f', 2);
     }
 
+    // Pause ends → next round begins: same signal as a fresh round start.
     function playPauseEnd() {
-      playBeep(660, 0.1);
-      setTimeout(() => playBeep(880, 0.15), 150);
+      playStart();
     }
 
+    // Round begins → "box now": triple boxing bell.
     function playStart() {
-      playBeep(440, 0.2);
-      setTimeout(() => playBeep(660, 0.2), 250);
+      if (soundOn()) { initAudio(); bell(0); bell(0.32); bell(0.64); }
+      vibrate([450, 150, 450, 150, 450]);
+      flash('#e63946', 3);
     }
 
+    // Workout finished: victory fanfare.
     function playDone() {
-      playBeep(523, 0.2);
-      setTimeout(() => playBeep(659, 0.2), 200);
-      setTimeout(() => playBeep(784, 0.2), 400);
-      setTimeout(() => playBeep(1047, 0.4), 600);
+      if (soundOn()) {
+        initAudio();
+        bell(0); bell(0.3); bell(0.6);
+        note({ freq: 523, start: 1.0, dur: 0.25, type: 'square', gain: 0.5 });
+        note({ freq: 659, start: 1.2, dur: 0.25, type: 'square', gain: 0.5 });
+        note({ freq: 784, start: 1.4, dur: 0.25, type: 'square', gain: 0.5 });
+        note({ freq: 1047, start: 1.6, dur: 0.6, type: 'square', gain: 0.65 });
+      }
+      vibrate([300, 100, 300, 100, 300, 100, 600]);
+      flash('#06d6a0', 4);
     }
 
     function getSettings() {
