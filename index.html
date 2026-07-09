@@ -243,6 +243,34 @@
       return document.getElementById('soundEnabled').checked;
     }
 
+    // Screen Wake Lock: hält den Bildschirm an, solange der Timer läuft.
+    let wakeLock = null;
+
+    async function requestWakeLock() {
+      if (!('wakeLock' in navigator)) return;
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } catch (err) {
+        // z.B. wenn Akku zu niedrig oder nicht erlaubt – kein Grund zum Absturz
+      }
+    }
+
+    async function releaseWakeLock() {
+      if (wakeLock) {
+        try { await wakeLock.release(); } catch (err) {}
+        wakeLock = null;
+      }
+    }
+
+    // Der Lock geht verloren, wenn der Tab in den Hintergrund geht (z.B. Benachrichtigung).
+    // Sobald die App wieder sichtbar ist und der Timer läuft, neu anfordern.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && isRunning) {
+        requestWakeLock();
+      }
+    });
+
     // Schedule one oscillator note relative to "now", routed through the master limiter.
     function note({ freq, start = 0, dur = 0.15, type = 'square', gain = 0.6, detune = 0 }) {
       const t0 = audioCtx.currentTime + start;
@@ -404,6 +432,7 @@
 
     function startTimer() {
       initAudio();
+      requestWakeLock();
       const settings = getSettings();
 
       if (!isRunning && !isPaused) {
@@ -449,6 +478,7 @@
               clearInterval(interval);
               isRunning = false;
               currentPhase = 'done';
+              releaseWakeLock();
               playDone();
               document.getElementById('phaseLabel').innerText = '✅ FERTIG!';
               document.getElementById('phaseLabel').className = 'phase done';
@@ -505,6 +535,7 @@
               clearInterval(interval);
               isRunning = false;
               currentPhase = 'done';
+              releaseWakeLock();
               playDone();
               document.getElementById('phaseLabel').innerText = '✅ FERTIG!';
               document.getElementById('phaseLabel').className = 'phase done';
@@ -538,11 +569,13 @@
         clearInterval(interval);
         isPaused = true;
         isRunning = false;
+        releaseWakeLock();
       }
     }
 
     function resetTimer() {
       stopRandomBeep();
+      releaseWakeLock();
       clearInterval(interval);
       currentRound = 0;
       isRunning = false;
