@@ -213,6 +213,8 @@
     let isRunning = false;
     let isPaused = false;
     let currentPhase = 'ready'; // ready, prep, round, pause, done
+    let remaining = 0;          // Restsekunden der aktuellen Phase (einzige Quelle der Wahrheit)
+    let settings = null;        // beim Start eingefrorene Einstellungen
     let randomBeepTimer = null;
 
     let audioCtx = null;
@@ -365,11 +367,6 @@
       flash('#2a9d8f', 2);
     }
 
-    // Pause ends → next round begins: same signal as a fresh round start.
-    function playPauseEnd() {
-      playStart();
-    }
-
     // Round begins → "box now": triple boxing bell.
     function playStart() {
       if (soundOn()) { initAudio(); bell(0); bell(0.32); bell(0.64); }
@@ -430,159 +427,128 @@
       fillEl.style.width = pct + '%';
     }
 
+    // Dauer der jeweiligen Phase in Sekunden.
+    function phaseDuration(phase) {
+      if (phase === 'prep')  return settings.prepTime;
+      if (phase === 'round') return settings.roundTime;
+      if (phase === 'pause') return settings.pauseTime;
+      return 0;
+    }
+
+    // Zentraler Ein-/Übergang in eine Phase: setzt Restzeit, spielt die passenden
+    // Signale und (neu-)plant die Zufallstöne. Das ist die einzige Stelle, an der
+    // Signale ausgelöst werden – dadurch gelten sie in JEDER Runde gleich.
+    function enterPhase(phase) {
+      currentPhase = phase;
+      remaining = phaseDuration(phase);
+
+      if (phase === 'round') {
+        playStart();          // Glocke = "los"
+        scheduleRandomBeep(); // Zufallstöne für DIESE Runde starten (auch Runde 2, 3, …)
+      } else if (phase === 'pause') {
+        playRoundEnd();       // Buzzer = Rundenende
+        stopRandomBeep();     // während der Pause keine Zufallstöne
+      }
+
+      updateDisplay(remaining, phase, currentRound, settings.totalRounds, phaseDuration(phase));
+    }
+
+    // Ein Sekundentakt. Zählt runter und schaltet an Phasengrenzen weiter.
+    function tick() {
+      remaining--;
+
+      if (remaining > 0) {
+        updateDisplay(remaining, currentPhase, currentRound, settings.totalRounds, phaseDuration(currentPhase));
+        return;
+      }
+
+      if (currentPhase === 'prep') {
+        currentRound = 1;
+        enterPhase('round');
+      } else if (currentPhase === 'round') {
+        if (currentRound >= settings.totalRounds) {
+          finish();
+          return;
+        }
+        currentRound++;
+        enterPhase('pause');
+      } else if (currentPhase === 'pause') {
+        enterPhase('round');
+      }
+    }
+
+    function startInterval() {
+      clearInterval(interval);
+      interval = setInterval(tick, 1000);
+    }
+
+    function finish() {
+      clearInterval(interval);
+      interval = null;
+      stopRandomBeep();
+      isRunning = false;
+      isPaused = false;
+      currentPhase = 'done';
+      releaseWakeLock();
+      playDone();
+      document.getElementById('phaseLabel').innerText = '✅ FERTIG!';
+      document.getElementById('phaseLabel').className = 'phase done';
+      document.getElementById('timerDisplay').innerText = '00:00';
+      document.getElementById('roundCounter').innerText = `Alle ${settings.totalRounds} Runden geschafft!`;
+      document.getElementById('progressFill').style.width = '100%';
+    }
+
     function startTimer() {
       initAudio();
       requestWakeLock();
-      const settings = getSettings();
 
-      if (!isRunning && !isPaused) {
-        // Fresh start
-        if (settings.prepTime > 0) {
-          currentPhase = 'prep';
-          currentRound = 1;
-          startPhase(settings.prepTime, 'prep', settings);
-        } else {
-          currentPhase = 'round';
-          currentRound = 1;
-          playStart();
-          startPhase(settings.roundTime, 'round', settings);
-        }
-      } else if (isPaused) {
-        // Resume
+      if (isRunning) return; // läuft bereits
+
+      if (isPaused) {
+        // Fortsetzen: Restzeit und Phase sind erhalten geblieben.
         isPaused = false;
         isRunning = true;
-        resumeTimer(settings);
+        if (currentPhase === 'round') scheduleRandomBeep();
+        startInterval();
+        return;
       }
-    }
 
-    function startPhase(duration, phase, settings) {
-      clearInterval(interval);
-      let remaining = duration;
-
-      updateDisplay(remaining, phase, currentRound, settings.totalRounds, duration);
-
-      interval = setInterval(() => {
-        remaining--;
-
-        if (remaining <= 0) {
-          if (phase === 'prep') {
-            currentPhase = 'round';
-            playStart();
-            scheduleRandomBeep();
-            updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
-            remaining = settings.roundTime;
-            phase = 'round';
-          } else if (phase === 'round') {
-            currentRound++;
-            if (currentRound > settings.totalRounds) {
-              clearInterval(interval);
-              isRunning = false;
-              currentPhase = 'done';
-              releaseWakeLock();
-              playDone();
-              document.getElementById('phaseLabel').innerText = '✅ FERTIG!';
-              document.getElementById('phaseLabel').className = 'phase done';
-              document.getElementById('timerDisplay').innerText = '00:00';
-              document.getElementById('roundCounter').innerText = `Alle ${settings.totalRounds} Runden geschafft!`;
-              document.getElementById('progressFill').style.width = '100%';
-              return;
-            }
-            playRoundEnd();
-            stopRandomBeep();
-            currentPhase = 'pause';
-            updateDisplay(settings.pauseTime, 'pause', currentRound, settings.totalRounds, settings.pauseTime);
-            remaining = settings.pauseTime;
-            phase = 'pause';
-          } else if (phase === 'pause') {
-            playPauseEnd();
-            currentPhase = 'round';
-            updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
-            remaining = settings.roundTime;
-            phase = 'round';
-          }
-        } else {
-          updateDisplay(remaining, phase, currentRound, settings.totalRounds, phase === 'round' ? settings.roundTime : phase === 'pause' ? settings.pauseTime : settings.prepTime);
-        }
-      }, 1000);
-
+      // Frischer Start
+      settings = getSettings();
+      currentRound = 1;
       isRunning = true;
       isPaused = false;
-    }
-
-    function resumeTimer(settings) {
-      const phase = currentPhase;
-      const display = document.getElementById('timerDisplay').innerText;
-      const parts = display.split(':');
-      const remaining = parseInt(parts[0]) * 60 + parseInt(parts[1]);
-
-      clearInterval(interval);
-      interval = setInterval(() => {
-        let currentRemaining = parseInt(document.getElementById('timerDisplay').innerText.split(':')[0]) * 60
-                             + parseInt(document.getElementById('timerDisplay').innerText.split(':')[1]);
-        currentRemaining--;
-
-        if (currentRemaining <= 0) {
-          if (phase === 'prep') {
-            currentPhase = 'round';
-            playStart();
-            scheduleRandomBeep();
-            currentRound = 1;
-            updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
-            currentRemaining = settings.roundTime;
-          } else if (phase === 'round') {
-            currentRound++;
-            if (currentRound > settings.totalRounds) {
-              clearInterval(interval);
-              isRunning = false;
-              currentPhase = 'done';
-              releaseWakeLock();
-              playDone();
-              document.getElementById('phaseLabel').innerText = '✅ FERTIG!';
-              document.getElementById('phaseLabel').className = 'phase done';
-              document.getElementById('timerDisplay').innerText = '00:00';
-              document.getElementById('roundCounter').innerText = `Alle ${settings.totalRounds} Runden geschafft!`;
-              document.getElementById('progressFill').style.width = '100%';
-              return;
-            }
-            playRoundEnd();
-            stopRandomBeep();
-            currentPhase = 'pause';
-            updateDisplay(settings.pauseTime, 'pause', currentRound, settings.totalRounds, settings.pauseTime);
-            currentRemaining = settings.pauseTime;
-          } else if (phase === 'pause') {
-            playPauseEnd();
-            currentPhase = 'round';
-            scheduleRandomBeep();
-            updateDisplay(settings.roundTime, 'round', currentRound, settings.totalRounds, settings.roundTime);
-            currentRemaining = settings.roundTime;
-          }
-        } else {
-          updateDisplay(currentRemaining, phase, currentRound, settings.totalRounds,
-            phase === 'round' ? settings.roundTime : phase === 'pause' ? settings.pauseTime : settings.prepTime);
-        }
-      }, 1000);
+      if (settings.prepTime > 0) {
+        enterPhase('prep');   // ohne Signal – nur Countdown "Vorbereitung"
+      } else {
+        enterPhase('round');  // direkt in Runde 1 inkl. Startsignal + Zufallstöne
+      }
+      startInterval();
     }
 
     function pauseTimer() {
+      if (!isRunning) return;
+      clearInterval(interval);
+      interval = null;
       stopRandomBeep();
-      if (isRunning) {
-        clearInterval(interval);
-        isPaused = true;
-        isRunning = false;
-        releaseWakeLock();
-      }
+      isPaused = true;
+      isRunning = false;
+      releaseWakeLock();
+      // remaining & currentPhase bleiben erhalten → sauberes Fortsetzen.
     }
 
     function resetTimer() {
       stopRandomBeep();
       releaseWakeLock();
       clearInterval(interval);
+      interval = null;
       currentRound = 0;
       isRunning = false;
       isPaused = false;
       currentPhase = 'ready';
-      const settings = getSettings();
-      document.getElementById('timerDisplay').innerText = formatTime(settings.prepTime > 0 ? settings.prepTime : settings.roundTime);
+      settings = getSettings();
+      remaining = settings.prepTime > 0 ? settings.prepTime : settings.roundTime;
+      document.getElementById('timerDisplay').innerText = formatTime(remaining);
       document.getElementById('phaseLabel').innerText = 'Bereit';
       document.getElementById('phaseLabel').className = 'phase ready';
       document.getElementById('roundCounter').innerText = `Runde 0 / ${settings.totalRounds}`;
